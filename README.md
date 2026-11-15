@@ -1,5 +1,7 @@
 # SMS Weather and Marine Routing System
 
+This project is no longer deployed; the code is kept here as a reference implementation.
+
 An SMS service that replies to text messages with marine weather forecasts and sailing route guidance. A user texts coordinates to a phone number and gets back a compact weather or route summary. The system can also store a user's location and proactively alert them when dangerous conditions are forecast.
 
 It is built on AWS Lambda and Twilio, and uses the free Open-Meteo forecast API for all weather data. It was field-tested on two Baltic Sea sailing trips using Garmin inReach satellite devices.
