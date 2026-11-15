@@ -27,11 +27,11 @@ def lambda_handler(event, context):
         # Determine which Lambda to invoke based on message content
         if '->' in sms_body:
             # Route request (has arrow)
-            target_function = 'route-sms-service'
+            target_function = 'route'
             print("Routing to route service")
         else:
             # Weather request (simple coordinates or commands)
-            target_function = 'weather-sms-service'
+            target_function = 'weather'
             print("Routing to weather service")
         
         # Invoke the appropriate Lambda function
