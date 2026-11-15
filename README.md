@@ -2,7 +2,7 @@
 
 An SMS service that replies to text messages with marine weather forecasts and sailing route guidance. A user texts coordinates to a phone number and gets back a compact weather or route summary. The system can also store a user's location and proactively alert them when dangerous conditions are forecast.
 
-It is built on AWS Lambda + Twilio, and uses the free Open-Meteo forecast API for all weather data.
+It is built on AWS Lambda and Twilio, and uses the free Open-Meteo forecast API for all weather data. It was field-tested on two Baltic Sea sailing trips using Garmin inReach satellite devices.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ The system is three separate AWS Lambda functions sitting behind a single Twilio
                  v          v
         +-----------+   +-----------+
         |   route   |   |  weather  |
-        | (sailing) |   | (weather  |
+        | (sailing  |   | (weather  |
         |  routes)  |   | + alerts) |
         +-----------+   +-----------+
                               |
@@ -38,14 +38,11 @@ Sail_model/
   lambda_router.py      Twilio webhook target; dispatches to a service
   lambda_route.py       Sailing route forecasts with a vessel speed model
   lambda_weather.py     Point weather, saved locations, scheduled alerts
-  lambda_function.py    extra handler — role unclear (see note below)
   requirements.txt      Python dependencies (pandas, twilio)
   README.md
 ```
 
-The three handlers live as separate files at the repository root: `lambda_router.py`, `lambda_route.py`, and `lambda_weather.py`. Each is deployed as its own AWS Lambda function. Because the files no longer share the AWS default name `lambda_function.py`, set each deployed function's handler to match its own filename — for example `lambda_router.lambda_handler` rather than `lambda_function.lambda_handler`.
-
-> **Note on `lambda_function.py`:** the repository contains a fourth Python file, `lambda_function.py`, that the three-service design above does not account for. It is most likely either a leftover copy of one handler or a shared entry point. Confirm its contents, then either fold it into the relevant service or remove it, and update the layout's one-line description accordingly.
+Each handler is deployed as its own AWS Lambda function. Set each function's handler to match its filename, for example `lambda_router.lambda_handler`.
 
 ## router
 
@@ -53,12 +50,10 @@ The entry point. Twilio is configured to call this function on every inbound SMS
 
 It reads the message body and routes by a single rule:
 
-- If the message contains `->` it is treated as a route request and forwarded to the route Lambda.
+- If the message contains `->`, it is treated as a route request and forwarded to the route Lambda.
 - Anything else (bare coordinates or a command word) is forwarded to the weather Lambda.
 
-It invokes the target function synchronously and returns that function's response back to Twilio. On any error it returns an empty TwiML response so Twilio does not retry or surface an error to the user.
-
-**IMPORTANT:** the router calls its targets by their exact deployed Lambda names. In the code these must be set to `route` and `weather`. If the two strings still read `route-sms-service` / `weather-sms-service` from an earlier version, change them to `route` and `weather` or the invoke calls will fail.
+It invokes the target function synchronously and returns that function's response to Twilio. On any error it returns an empty TwiML response, so Twilio does not retry or surface an error to the user. The router invokes its targets by their deployed Lambda names, `route` and `weather`.
 
 ## route
 
@@ -78,14 +73,14 @@ Example (Tallinn to Stockholm):
 
 ### What it does
 
-- Parses the start and destination coordinates.
-- Walks the great-circle route hour by hour (up to a 50-hour horizon), pulling the Open-Meteo forecast at each step.
-- Estimates boat speed at each step using a simple vessel model based on hull speed, true wind speed, and true wind angle. Default vessel is 23 m length, 5 m beam (hardcoded in the handler).
-- Builds a compact SMS containing the next several hours of wind along the route, an estimated speed over ground and ETA, and any hazard warnings.
+1. Parses the start and destination coordinates.
+2. Walks the great-circle route hour by hour (up to a 50-hour horizon), pulling the Open-Meteo forecast at each step.
+3. Estimates boat speed at each step using a vessel model based on hull speed, true wind speed, and true wind angle. The default vessel is 23 m length and 5 m beam.
+4. Builds a compact SMS containing the next several hours of wind along the route, an estimated speed over ground and ETA, and any hazard warnings.
 
 ### Reading the reply
 
-The reply is abbreviated to fit SMS length limits. A typical line looks like:
+The reply is abbreviated to fit SMS length limits. A typical reply looks like:
 
 ```
 SOG~6.2kt ETA~14h
@@ -95,7 +90,7 @@ SOG~6.2kt ETA~14h
 - `14h 18kt 245deg 24kt` means: at 14:00, wind 18 knots from 245 degrees, gusting 24 knots.
 - A trailing arrow shows the wind trend over the window: up arrow rising, down arrow falling.
 - `V20` means the wind is veering (shifting clockwise) 20 degrees; `B20` means backing (shifting counter-clockwise).
-- Rain tokens flag which upcoming hours have rain: `RL`, `RM`, `RS` are light / moderate / heavy, followed by the hour offsets (for example `RM34` means moderate rain in hours 3 and 4).
+- Rain tokens flag which upcoming hours have rain: `RL`, `RM`, `RS` are light, moderate, and heavy, followed by the hour offsets (for example `RM34` means moderate rain in hours 3 and 4).
 
 ### Hazard warnings
 
@@ -103,12 +98,12 @@ If conditions warrant, the reply is prefixed with a `WARN` line listing any of: 
 
 ## weather
 
-Handles point weather lookups, remembers a user's location, and runs scheduled storm monitoring. Triggered by the router for any non-route message, and also by a scheduled EventBridge rule for the monitoring sweep.
+Handles point weather lookups, remembers a user's location, and runs scheduled storm monitoring. Triggered by the router for any non-route message, and by a scheduled EventBridge rule for the monitoring sweep.
 
 ### Commands and input
 
 | Message | Action |
-| --- | --- |
+|---|---|
 | `59.444, 24.768` | Save this location and reply with current weather plus any warnings |
 | `CHECK` / `STATUS` / `WEATHER` | Reply with weather for your last saved location |
 | `START` / `SUBSCRIBE` / `MONITOR` | Enable proactive storm alerts for your saved location |
@@ -126,7 +121,7 @@ If there are hazards, the last line is replaced with up to two warnings such as 
 
 ### Scheduled monitoring
 
-When invoked by a scheduled event (event source of `aws.events`), the function scans all users who have monitoring enabled, checks each saved location for dangerous conditions, and texts an alert to anyone at risk. Each user is rate-limited to at most one alert every 6 hours so they are not spammed.
+When invoked by a scheduled event (event source `aws.events`), the function scans all users who have monitoring enabled, checks each saved location for dangerous conditions, and texts an alert to anyone at risk. Each user receives at most one alert every 6 hours.
 
 ### Location storage
 
@@ -136,35 +131,33 @@ Saved locations live in a DynamoDB table (default name `user-locations`, overrid
 
 ### Environment variables
 
-All three functions need the Twilio credentials. The weather function additionally uses the optional table name.
-
 | Variable | router | route | weather |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | `TWILIO_ACCOUNT_SID` | - | required | required |
 | `TWILIO_AUTH_TOKEN` | - | required | required |
 | `TWILIO_PHONE_NUMBER` | - | required | required |
 | `DYNAMODB_TABLE` | - | - | optional (default `user-locations`) |
 
-The router itself needs no Twilio credentials; it only forwards events.
+The router needs no Twilio credentials; it only forwards events.
 
 ### AWS resources
 
-- Three Lambda functions, deployed under the names `router`, `route`, and `weather`. The names `route` and `weather` must match exactly, because the router invokes them by name.
+- Three Lambda functions, deployed under the names `router`, `route`, and `weather`.
 - A DynamoDB table for saved locations, with a `phone_number` partition key and a `ttl` attribute enabled for expiry.
 - An IAM role for the router permitting `lambda:InvokeFunction` on the route and weather functions.
 - An IAM role for the weather function permitting DynamoDB read/write.
-- An EventBridge (CloudWatch Events) schedule that periodically invokes the weather function for the monitoring sweep, if you want proactive alerts.
+- An EventBridge schedule that periodically invokes the weather function for the monitoring sweep.
 
-## Dependencies
+### Dependencies
 
-The route and weather functions import `pandas` and `twilio`, which are not in the default Lambda runtime; both are pinned in `requirements.txt`. Package them with the function (a deployment zip or a Lambda layer). `boto3`, used by weather, is already present in the Lambda runtime. The router has no third-party dependencies.
+The route and weather functions import `pandas` and `twilio`, which are not in the default Lambda runtime; both are pinned in `requirements.txt`. Package them with the function as a deployment zip or a Lambda layer. `boto3`, used by weather, is already present in the Lambda runtime. The router has no third-party dependencies.
 
-## Twilio setup
+### Twilio setup
 
 Point your Twilio number's incoming-message webhook at the router function's URL (via API Gateway or a Lambda function URL).
 
-## Notes and limitations
+## Limitations
 
-- The vessel dimensions in the route function are hardcoded defaults; there is no way to set them per user yet.
-- The route function requests a fresh forecast for every simulated hour of the route, which can mean many API calls per request. Fine for light use; revisit if you hit Open-Meteo rate limits.
+- Vessel dimensions in the route function are fixed defaults and cannot yet be set per user.
+- The route function requests a fresh forecast for every simulated hour of the route, which can mean many API calls per request.
 - Weather data comes from Open-Meteo and is provided as-is. This is an informational aid, not a substitute for official marine forecasts or navigational judgment.
